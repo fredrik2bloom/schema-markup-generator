@@ -46,7 +46,7 @@ interface AnalyzePageRequest {
       products: string[];
     };
     confidence: number;
-  };
+  } | null;
 }
 
 interface AnalyzePageResponse {

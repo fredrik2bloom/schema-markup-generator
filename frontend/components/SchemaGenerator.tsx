@@ -229,7 +229,7 @@ export function SchemaGenerator() {
       updateStepStatus("scrape", "completed");
 
       // Step 2: Analyze screenshot (if available)
-      let screenshotAnalysisResult = null;
+      let screenshotAnalysisResult: ScreenshotAnalysis | null = null;
       if (scrapeResult.screenshot) {
         updateStepStatus("screenshot", "running");
         setCurrentStep(1);

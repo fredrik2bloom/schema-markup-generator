@@ -56,7 +56,7 @@ interface GenerateSchemaRequest {
       products: string[];
     };
     confidence: number;
-  };
+  } | null;
 }
 
 interface GenerateSchemaResponse {
