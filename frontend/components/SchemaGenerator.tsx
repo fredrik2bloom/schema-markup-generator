@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Globe, Code, CheckCircle, AlertTriangle, XCircle, Search, Brain, Target, Eye, Zap, FileText, Database, Lightbulb } from "lucide-react";
+import { Loader2, Globe, Code, CheckCircle, AlertTriangle, XCircle, Search, Brain, Target, Eye, Zap, FileText, Database, Lightbulb, Camera } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import backend from "~backend/client";
 import type { ValidateSchemaResponse } from "~backend/schema/validate";
@@ -40,6 +40,46 @@ interface SchemaPattern {
   required: boolean;
 }
 
+interface ScreenshotAnalysis {
+  visualDescription: string;
+  pageElements: {
+    header: string;
+    navigation: string[];
+    mainContent: string;
+    sidebar?: string;
+    footer?: string;
+    images: string[];
+    forms: string[];
+    buttons: string[];
+    links: string[];
+  };
+  designAnalysis: {
+    layout: string;
+    colorScheme: string;
+    typography: string;
+    branding: string;
+  };
+  contentAnalysis: {
+    primaryPurpose: string;
+    targetAudience: string;
+    keyMessages: string[];
+    callsToAction: string[];
+  };
+  technicalObservations: {
+    deviceType: string;
+    responsive: boolean;
+    accessibility: string[];
+    performance: string[];
+  };
+  businessContext: {
+    industry: string;
+    businessType: string;
+    services: string[];
+    products: string[];
+  };
+  confidence: number;
+}
+
 export function SchemaGenerator() {
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -65,6 +105,7 @@ export function SchemaGenerator() {
     description?: string;
     url: string;
   } | null>(null);
+  const [screenshotAnalysis, setScreenshotAnalysis] = useState<ScreenshotAnalysis | null>(null);
   const [analysisData, setAnalysisData] = useState<{
     pageType: string;
     category: string;
@@ -87,6 +128,13 @@ export function SchemaGenerator() {
       description: "Extracting content and capturing screenshot",
       status: "pending",
       icon: Globe
+    },
+    {
+      id: "screenshot",
+      title: "Analyzing Screenshot",
+      description: "AI-powered visual analysis of the website",
+      status: "pending",
+      icon: Camera
     },
     {
       id: "analyze",
@@ -159,6 +207,7 @@ export function SchemaGenerator() {
     setOptimizationChanges([]);
     setScreenshot(null);
     setScrapedData(null);
+    setScreenshotAnalysis(null);
     setAnalysisData(null);
     setSearchResults([]);
     setPatternData(null);
@@ -179,21 +228,45 @@ export function SchemaGenerator() {
       });
       updateStepStatus("scrape", "completed");
 
-      // Step 2: Analyze the content
+      // Step 2: Analyze screenshot (if available)
+      let screenshotAnalysisResult = null;
+      if (scrapeResult.screenshot) {
+        updateStepStatus("screenshot", "running");
+        setCurrentStep(1);
+        try {
+          screenshotAnalysisResult = await backend.scraper.analyzeScreenshot({
+            screenshot: scrapeResult.screenshot,
+            url: scrapeResult.url,
+            title: scrapeResult.title,
+            content: scrapeResult.content,
+          });
+          setScreenshotAnalysis(screenshotAnalysisResult);
+          updateStepStatus("screenshot", "completed");
+        } catch (screenshotError) {
+          console.error("Screenshot analysis failed:", screenshotError);
+          updateStepStatus("screenshot", "error");
+          // Continue without screenshot analysis
+        }
+      } else {
+        updateStepStatus("screenshot", "completed");
+      }
+
+      // Step 3: Analyze the content (now with screenshot analysis)
       updateStepStatus("analyze", "running");
-      setCurrentStep(1);
+      setCurrentStep(2);
       const analysisResult = await backend.scraper.analyzePage({
         content: scrapeResult.content,
         title: scrapeResult.title,
         description: scrapeResult.description,
         url: scrapeResult.url,
+        screenshotAnalysis: screenshotAnalysisResult,
       });
       setAnalysisData(analysisResult);
       updateStepStatus("analyze", "completed");
 
-      // Step 3: Search for similar pages
+      // Step 4: Search for similar pages
       updateStepStatus("search", "running");
-      setCurrentStep(2);
+      setCurrentStep(3);
       const searchResult = await backend.scraper.searchSimilarPages({
         queries: analysisResult.searchQueries,
         pageType: analysisResult.pageType,
@@ -206,14 +279,14 @@ export function SchemaGenerator() {
       let patterns;
       let insights;
 
-      // Step 4: Analyze patterns (only if we found examples with schema markup)
+      // Step 5: Analyze patterns (only if we found examples with schema markup)
       const exampleSchemas = searchResult.results
         .filter(result => result.schemaMarkup && result.schemaMarkup.length > 0)
         .flatMap(result => result.schemaMarkup || []);
 
       if (exampleSchemas.length > 0) {
         updateStepStatus("patterns", "running");
-        setCurrentStep(3);
+        setCurrentStep(4);
         try {
           const patternAnalysis = await backend.schema.analyzeExamples({
             pageType: analysisResult.pageType,
@@ -237,9 +310,9 @@ export function SchemaGenerator() {
         updateStepStatus("patterns", "completed");
       }
 
-      // Step 5: Generate schema markup
+      // Step 6: Generate schema markup (now with screenshot analysis)
       updateStepStatus("generate", "running");
-      setCurrentStep(4);
+      setCurrentStep(5);
       const schemaResult = await backend.schema.generate({
         content: scrapeResult.content,
         title: scrapeResult.title,
@@ -250,6 +323,7 @@ export function SchemaGenerator() {
         recommendedStructure,
         patterns,
         insights,
+        screenshotAnalysis: screenshotAnalysisResult,
       });
 
       let finalSchema = schemaResult.schema;
@@ -257,10 +331,10 @@ export function SchemaGenerator() {
       setAppliedPatterns(schemaResult.appliedPatterns);
       updateStepStatus("generate", "completed");
 
-      // Step 6: Visual validation (if screenshot is available)
+      // Step 7: Visual validation (if screenshot is available)
       if (scrapeResult.screenshot) {
         updateStepStatus("visual", "running");
-        setCurrentStep(5);
+        setCurrentStep(6);
         try {
           const visualValidationResult = await backend.schema.visualValidate({
             schema: finalSchema,
@@ -272,10 +346,10 @@ export function SchemaGenerator() {
           setVisualValidation(visualValidationResult);
           updateStepStatus("visual", "completed");
 
-          // Step 7: Optimize schema based on visual validation
+          // Step 8: Optimize schema based on visual validation
           if (visualValidationResult.validations.length > 0 || visualValidationResult.improvements.length > 0) {
             updateStepStatus("optimize", "running");
-            setCurrentStep(6);
+            setCurrentStep(7);
             try {
               const optimizationResult = await backend.schema.optimize({
                 originalSchema: finalSchema,
@@ -529,6 +603,161 @@ export function SchemaGenerator() {
               <p className="text-xs text-gray-500 mt-1">
                 Total content length: {scrapedData.content.length} characters
               </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Screenshot Analysis Results */}
+      {screenshotAnalysis && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Camera className="h-5 w-5" />
+              Screenshot Analysis Results
+            </CardTitle>
+            <CardDescription>
+              AI-powered visual analysis of the website screenshot
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h4 className="font-medium mb-2">Visual Description</h4>
+              <p className="text-sm text-gray-700">{screenshotAnalysis.visualDescription}</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-medium text-sm mb-2">Business Context</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="default" className="text-xs">
+                      {screenshotAnalysis.businessContext.industry}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      {screenshotAnalysis.businessContext.businessType}
+                    </Badge>
+                  </div>
+                  {screenshotAnalysis.businessContext.services.length > 0 && (
+                    <div>
+                      <span className="text-xs font-medium">Services: </span>
+                      <span className="text-xs text-gray-600">
+                        {screenshotAnalysis.businessContext.services.join(', ')}
+                      </span>
+                    </div>
+                  )}
+                  {screenshotAnalysis.businessContext.products.length > 0 && (
+                    <div>
+                      <span className="text-xs font-medium">Products: </span>
+                      <span className="text-xs text-gray-600">
+                        {screenshotAnalysis.businessContext.products.join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div>
+                <h4 className="font-medium text-sm mb-2">Content Strategy</h4>
+                <div className="space-y-2">
+                  <div>
+                    <span className="text-xs font-medium">Purpose: </span>
+                    <span className="text-xs text-gray-600">{screenshotAnalysis.contentAnalysis.primaryPurpose}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium">Audience: </span>
+                    <span className="text-xs text-gray-600">{screenshotAnalysis.contentAnalysis.targetAudience}</span>
+                  </div>
+                  {screenshotAnalysis.contentAnalysis.callsToAction.length > 0 && (
+                    <div>
+                      <span className="text-xs font-medium">CTAs: </span>
+                      <span className="text-xs text-gray-600">
+                        {screenshotAnalysis.contentAnalysis.callsToAction.join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-medium text-sm mb-2">Page Elements Identified</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <div className="mb-2">
+                    <span className="font-medium">Header: </span>
+                    <span className="text-gray-600">{screenshotAnalysis.pageElements.header}</span>
+                  </div>
+                  <div className="mb-2">
+                    <span className="font-medium">Main Content: </span>
+                    <span className="text-gray-600">{screenshotAnalysis.pageElements.mainContent}</span>
+                  </div>
+                  {screenshotAnalysis.pageElements.navigation.length > 0 && (
+                    <div className="mb-2">
+                      <span className="font-medium">Navigation: </span>
+                      <span className="text-gray-600">{screenshotAnalysis.pageElements.navigation.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  {screenshotAnalysis.pageElements.images.length > 0 && (
+                    <div className="mb-2">
+                      <span className="font-medium">Images: </span>
+                      <span className="text-gray-600">{screenshotAnalysis.pageElements.images.join(', ')}</span>
+                    </div>
+                  )}
+                  {screenshotAnalysis.pageElements.buttons.length > 0 && (
+                    <div className="mb-2">
+                      <span className="font-medium">Buttons: </span>
+                      <span className="text-gray-600">{screenshotAnalysis.pageElements.buttons.join(', ')}</span>
+                    </div>
+                  )}
+                  {screenshotAnalysis.pageElements.forms.length > 0 && (
+                    <div className="mb-2">
+                      <span className="font-medium">Forms: </span>
+                      <span className="text-gray-600">{screenshotAnalysis.pageElements.forms.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-medium text-sm mb-2">Design Analysis</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <div className="mb-1">
+                    <span className="font-medium">Layout: </span>
+                    <span className="text-gray-600">{screenshotAnalysis.designAnalysis.layout}</span>
+                  </div>
+                  <div className="mb-1">
+                    <span className="font-medium">Color Scheme: </span>
+                    <span className="text-gray-600">{screenshotAnalysis.designAnalysis.colorScheme}</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1">
+                    <span className="font-medium">Typography: </span>
+                    <span className="text-gray-600">{screenshotAnalysis.designAnalysis.typography}</span>
+                  </div>
+                  <div className="mb-1">
+                    <span className="font-medium">Branding: </span>
+                    <span className="text-gray-600">{screenshotAnalysis.designAnalysis.branding}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-medium">Analysis Confidence: </span>
+                <span className="text-lg font-bold text-blue-600">
+                  {Math.round(screenshotAnalysis.confidence * 100)}%
+                </span>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                {screenshotAnalysis.technicalObservations.deviceType}
+              </Badge>
             </div>
           </CardContent>
         </Card>

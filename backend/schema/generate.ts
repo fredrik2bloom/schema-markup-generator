@@ -18,6 +18,45 @@ interface GenerateSchemaRequest {
     required: boolean;
   }>;
   insights?: string[];
+  screenshotAnalysis?: {
+    visualDescription: string;
+    pageElements: {
+      header: string;
+      navigation: string[];
+      mainContent: string;
+      sidebar?: string;
+      footer?: string;
+      images: string[];
+      forms: string[];
+      buttons: string[];
+      links: string[];
+    };
+    designAnalysis: {
+      layout: string;
+      colorScheme: string;
+      typography: string;
+      branding: string;
+    };
+    contentAnalysis: {
+      primaryPurpose: string;
+      targetAudience: string;
+      keyMessages: string[];
+      callsToAction: string[];
+    };
+    technicalObservations: {
+      deviceType: string;
+      responsive: boolean;
+      accessibility: string[];
+      performance: string[];
+    };
+    businessContext: {
+      industry: string;
+      businessType: string;
+      services: string[];
+      products: string[];
+    };
+    confidence: number;
+  };
 }
 
 interface GenerateSchemaResponse {
@@ -45,6 +84,43 @@ Content:
 ${req.content.substring(0, 4000)} ${req.content.length > 4000 ? "..." : ""}
 `;
 
+    // Add screenshot analysis if available
+    if (req.screenshotAnalysis) {
+      prompt += `
+
+VISUAL ANALYSIS FROM SCREENSHOT:
+Visual Description: ${req.screenshotAnalysis.visualDescription}
+
+Page Elements Identified:
+- Header: ${req.screenshotAnalysis.pageElements.header}
+- Navigation: ${req.screenshotAnalysis.pageElements.navigation.join(', ')}
+- Main Content: ${req.screenshotAnalysis.pageElements.mainContent}
+- Images: ${req.screenshotAnalysis.pageElements.images.join(', ')}
+- Forms: ${req.screenshotAnalysis.pageElements.forms.join(', ')}
+- Buttons: ${req.screenshotAnalysis.pageElements.buttons.join(', ')}
+- Important Links: ${req.screenshotAnalysis.pageElements.links.join(', ')}
+
+Design & Branding:
+- Layout: ${req.screenshotAnalysis.designAnalysis.layout}
+- Color Scheme: ${req.screenshotAnalysis.designAnalysis.colorScheme}
+- Typography: ${req.screenshotAnalysis.designAnalysis.typography}
+- Branding: ${req.screenshotAnalysis.designAnalysis.branding}
+
+Content Strategy:
+- Primary Purpose: ${req.screenshotAnalysis.contentAnalysis.primaryPurpose}
+- Target Audience: ${req.screenshotAnalysis.contentAnalysis.targetAudience}
+- Key Messages: ${req.screenshotAnalysis.contentAnalysis.keyMessages.join(', ')}
+- Calls to Action: ${req.screenshotAnalysis.contentAnalysis.callsToAction.join(', ')}
+
+Business Context:
+- Industry: ${req.screenshotAnalysis.businessContext.industry}
+- Business Type: ${req.screenshotAnalysis.businessContext.businessType}
+- Services: ${req.screenshotAnalysis.businessContext.services.join(', ')}
+- Products: ${req.screenshotAnalysis.businessContext.products.join(', ')}
+
+Use this visual analysis to create more accurate and comprehensive schema markup that reflects what users actually see on the page.`;
+    }
+
     // Add pattern-based guidance if available
     if (req.pageType && req.recommendedStructure) {
       prompt += `
@@ -66,11 +142,12 @@ Please adapt this structure to fit the specific content while maintaining the pr
 Requirements:
 1. Generate valid JSON-LD markup that follows schema.org standards
 2. Use appropriate schema.org types${req.pageType ? ` (preferably ${req.pageType})` : ''}
-3. Include all relevant properties based on the content
+3. Include all relevant properties based on the content AND visual elements
 4. Ensure the JSON is properly formatted
 5. Include @context and @type
 6. Use the provided URL, title, and description where appropriate
 ${req.recommendedStructure ? '7. Follow the recommended structure patterns where applicable' : ''}
+${req.screenshotAnalysis ? '8. Incorporate visual elements and business context from the screenshot analysis' : ''}
 
 CRITICAL: Return your response in this EXACT JSON format with no additional text or markdown:
 {
@@ -99,7 +176,7 @@ Do not include any explanations, markdown formatting, or additional text. Return
           messages: [
             {
               role: "system",
-              content: "You are an expert in schema.org markup and SEO. Generate accurate and comprehensive JSON-LD schema markup. Always respond with valid JSON only, no markdown or additional text."
+              content: "You are an expert in schema.org markup and SEO. Generate accurate and comprehensive JSON-LD schema markup based on both textual content and visual analysis. Always respond with valid JSON only, no markdown or additional text."
             },
             {
               role: "user",

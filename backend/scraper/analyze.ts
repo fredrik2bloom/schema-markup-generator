@@ -8,6 +8,45 @@ interface AnalyzePageRequest {
   title: string;
   description?: string;
   url: string;
+  screenshotAnalysis?: {
+    visualDescription: string;
+    pageElements: {
+      header: string;
+      navigation: string[];
+      mainContent: string;
+      sidebar?: string;
+      footer?: string;
+      images: string[];
+      forms: string[];
+      buttons: string[];
+      links: string[];
+    };
+    designAnalysis: {
+      layout: string;
+      colorScheme: string;
+      typography: string;
+      branding: string;
+    };
+    contentAnalysis: {
+      primaryPurpose: string;
+      targetAudience: string;
+      keyMessages: string[];
+      callsToAction: string[];
+    };
+    technicalObservations: {
+      deviceType: string;
+      responsive: boolean;
+      accessibility: string[];
+      performance: string[];
+    };
+    businessContext: {
+      industry: string;
+      businessType: string;
+      services: string[];
+      products: string[];
+    };
+    confidence: number;
+  };
 }
 
 interface AnalyzePageResponse {
@@ -17,7 +56,7 @@ interface AnalyzePageResponse {
   confidence: number;
 }
 
-// Analyzes scraped content to determine page type and generate search queries for similar pages.
+// Analyzes scraped content and screenshot analysis to determine page type and generate search queries for similar pages.
 export const analyzePage = api<AnalyzePageRequest, AnalyzePageResponse>(
   { expose: true, method: "POST", path: "/analyze-page" },
   async (req) => {
@@ -25,7 +64,7 @@ export const analyzePage = api<AnalyzePageRequest, AnalyzePageResponse>(
       throw APIError.invalidArgument("Content, title, and URL are required");
     }
 
-    const prompt = `
+    let prompt = `
 Analyze the following website content and determine:
 1. The primary page type (e.g., Article, Product, Organization, Person, Event, Recipe, etc.)
 2. The business category/industry
@@ -37,6 +76,45 @@ Description: ${req.description || "Not provided"}
 
 Content:
 ${req.content.substring(0, 3000)} ${req.content.length > 3000 ? "..." : ""}
+`;
+
+    // Add screenshot analysis if available
+    if (req.screenshotAnalysis) {
+      prompt += `
+
+VISUAL ANALYSIS FROM SCREENSHOT:
+Visual Description: ${req.screenshotAnalysis.visualDescription}
+
+Page Elements:
+- Header: ${req.screenshotAnalysis.pageElements.header}
+- Navigation: ${req.screenshotAnalysis.pageElements.navigation.join(', ')}
+- Main Content: ${req.screenshotAnalysis.pageElements.mainContent}
+- Images: ${req.screenshotAnalysis.pageElements.images.join(', ')}
+- Forms: ${req.screenshotAnalysis.pageElements.forms.join(', ')}
+- Buttons: ${req.screenshotAnalysis.pageElements.buttons.join(', ')}
+
+Design Analysis:
+- Layout: ${req.screenshotAnalysis.designAnalysis.layout}
+- Color Scheme: ${req.screenshotAnalysis.designAnalysis.colorScheme}
+- Typography: ${req.screenshotAnalysis.designAnalysis.typography}
+- Branding: ${req.screenshotAnalysis.designAnalysis.branding}
+
+Content Analysis:
+- Primary Purpose: ${req.screenshotAnalysis.contentAnalysis.primaryPurpose}
+- Target Audience: ${req.screenshotAnalysis.contentAnalysis.targetAudience}
+- Key Messages: ${req.screenshotAnalysis.contentAnalysis.keyMessages.join(', ')}
+- Calls to Action: ${req.screenshotAnalysis.contentAnalysis.callsToAction.join(', ')}
+
+Business Context:
+- Industry: ${req.screenshotAnalysis.businessContext.industry}
+- Business Type: ${req.screenshotAnalysis.businessContext.businessType}
+- Services: ${req.screenshotAnalysis.businessContext.services.join(', ')}
+- Products: ${req.screenshotAnalysis.businessContext.products.join(', ')}
+
+Use this visual analysis to enhance your understanding of the page type and generate more accurate search queries.`;
+    }
+
+    prompt += `
 
 CRITICAL: Return your response in this EXACT JSON format with no additional text or markdown:
 {
@@ -61,7 +139,7 @@ Do not include any explanations, markdown formatting, or additional text. Return
           messages: [
             {
               role: "system",
-              content: "You are an expert in web content analysis and schema.org markup. Always respond with valid JSON only, no markdown or additional text."
+              content: "You are an expert in web content analysis and schema.org markup. Use both textual content and visual analysis to determine the most appropriate schema type. Always respond with valid JSON only, no markdown or additional text."
             },
             {
               role: "user",
