@@ -51,12 +51,12 @@ Please analyze these examples and provide:
 2. Identify which fields appear most frequently
 3. Provide insights about best practices observed
 
-Return your analysis in this JSON format:
+CRITICAL: Return your response in this EXACT JSON format with no additional text or markdown:
 {
   "recommendedStructure": {
     "@context": "https://schema.org",
     "@type": "${req.pageType}",
-    // ... recommended fields based on patterns
+    "name": "Example Name"
   },
   "patterns": [
     {
@@ -72,7 +72,7 @@ Return your analysis in this JSON format:
   ]
 }
 
-Focus on creating a comprehensive but practical schema structure that incorporates the most common and valuable patterns from the examples.
+Do not include any explanations, markdown formatting, or additional text. Return only the JSON object.
 `;
 
     try {
@@ -87,14 +87,14 @@ Focus on creating a comprehensive but practical schema structure that incorporat
           messages: [
             {
               role: "system",
-              content: "You are an expert in schema.org markup analysis. Analyze patterns in example schemas to recommend optimal structures for new content."
+              content: "You are an expert in schema.org markup analysis. Always respond with valid JSON only, no markdown or additional text."
             },
             {
               role: "user",
               content: prompt
             }
           ],
-          temperature: 0.2,
+          temperature: 0.1,
           max_tokens: 2000,
         }),
       });
@@ -110,27 +110,83 @@ Focus on creating a comprehensive but practical schema structure that incorporat
         throw APIError.internal("No content generated from OpenAI");
       }
 
+      // Clean the response - remove any markdown formatting
+      let cleanedContent = generatedContent.trim();
+      
+      // Remove markdown code blocks if present
+      cleanedContent = cleanedContent.replace(/```json\s*/g, '');
+      cleanedContent = cleanedContent.replace(/```\s*/g, '');
+      
+      // Remove any leading/trailing whitespace
+      cleanedContent = cleanedContent.trim();
+
       // Parse the JSON response
       let analysis: AnalyzeExamplesResponse;
       try {
-        analysis = JSON.parse(generatedContent);
+        analysis = JSON.parse(cleanedContent);
       } catch (parseError) {
-        // Try to extract JSON from the response if it's wrapped in markdown or other text
-        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        console.error("Failed to parse analysis response:", cleanedContent);
+        
+        // Try to extract JSON from the response if it's wrapped in other text
+        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           try {
             analysis = JSON.parse(jsonMatch[0]);
-          } catch {
-            throw APIError.internal("Failed to parse schema analysis");
+          } catch (secondParseError) {
+            console.error("Failed to parse extracted JSON:", jsonMatch[0]);
+            
+            // Create a fallback response
+            analysis = {
+              recommendedStructure: {
+                "@context": "https://schema.org",
+                "@type": req.pageType,
+                "name": req.originalTitle,
+                "url": req.originalUrl
+              },
+              patterns: [],
+              insights: ["Unable to analyze patterns due to parsing issues"]
+            };
           }
         } else {
-          throw APIError.internal("Failed to parse schema analysis");
+          // Create a fallback response
+          analysis = {
+            recommendedStructure: {
+              "@context": "https://schema.org",
+              "@type": req.pageType,
+              "name": req.originalTitle,
+              "url": req.originalUrl
+            },
+            patterns: [],
+            insights: ["Unable to analyze patterns due to parsing issues"]
+          };
         }
       }
 
-      // Validate the response structure
-      if (!analysis.recommendedStructure || !Array.isArray(analysis.patterns) || !Array.isArray(analysis.insights)) {
-        throw APIError.internal("Invalid analysis response structure");
+      // Validate the response structure and provide defaults
+      if (!analysis.recommendedStructure || typeof analysis.recommendedStructure !== 'object') {
+        analysis.recommendedStructure = {
+          "@context": "https://schema.org",
+          "@type": req.pageType,
+          "name": req.originalTitle,
+          "url": req.originalUrl
+        };
+      }
+      
+      if (!Array.isArray(analysis.patterns)) {
+        analysis.patterns = [];
+      }
+      
+      if (!Array.isArray(analysis.insights)) {
+        analysis.insights = [];
+      }
+
+      // Ensure the recommended structure has required fields
+      if (!analysis.recommendedStructure["@context"]) {
+        analysis.recommendedStructure["@context"] = "https://schema.org";
+      }
+      
+      if (!analysis.recommendedStructure["@type"]) {
+        analysis.recommendedStructure["@type"] = req.pageType;
       }
 
       return analysis;
@@ -138,7 +194,8 @@ Focus on creating a comprehensive but practical schema structure that incorporat
       if (error instanceof APIError) {
         throw error;
       }
-      throw APIError.internal(`Failed to analyze schema examples: ${error}`);
+      console.error("Schema analysis error:", error);
+      throw APIError.internal(`Failed to analyze schema examples: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 );

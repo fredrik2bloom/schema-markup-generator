@@ -166,18 +166,24 @@ export function SchemaGenerator() {
       if (exampleSchemas.length > 0) {
         updateStepStatus("patterns", "running");
         setCurrentStep(3);
-        const patternAnalysis = await backend.schema.analyzeExamples({
-          pageType: analysisResult.pageType,
-          category: analysisResult.category,
-          originalContent: scrapeResult.content,
-          originalTitle: scrapeResult.title,
-          originalUrl: scrapeResult.url,
-          exampleSchemas,
-        });
-        recommendedStructure = patternAnalysis.recommendedStructure;
-        patterns = patternAnalysis.patterns;
-        insights = patternAnalysis.insights;
-        updateStepStatus("patterns", "completed");
+        try {
+          const patternAnalysis = await backend.schema.analyzeExamples({
+            pageType: analysisResult.pageType,
+            category: analysisResult.category,
+            originalContent: scrapeResult.content,
+            originalTitle: scrapeResult.title,
+            originalUrl: scrapeResult.url,
+            exampleSchemas,
+          });
+          recommendedStructure = patternAnalysis.recommendedStructure;
+          patterns = patternAnalysis.patterns;
+          insights = patternAnalysis.insights;
+          updateStepStatus("patterns", "completed");
+        } catch (patternError) {
+          console.error("Pattern analysis failed:", patternError);
+          updateStepStatus("patterns", "error");
+          // Continue without pattern analysis
+        }
       } else {
         updateStepStatus("patterns", "completed");
       }
@@ -206,34 +212,47 @@ export function SchemaGenerator() {
       if (scrapeResult.screenshot) {
         updateStepStatus("visual", "running");
         setCurrentStep(5);
-        const visualValidationResult = await backend.schema.visualValidate({
-          schema: finalSchema,
-          screenshot: scrapeResult.screenshot,
-          url: scrapeResult.url,
-          title: scrapeResult.title,
-          content: scrapeResult.content,
-        });
-        setVisualValidation(visualValidationResult);
-        updateStepStatus("visual", "completed");
-
-        // Step 7: Optimize schema based on visual validation
-        if (visualValidationResult.validations.length > 0 || visualValidationResult.improvements.length > 0) {
-          updateStepStatus("optimize", "running");
-          setCurrentStep(6);
-          const optimizationResult = await backend.schema.optimize({
-            originalSchema: finalSchema,
-            visualValidation: visualValidationResult,
-            content: scrapeResult.content,
-            title: scrapeResult.title,
+        try {
+          const visualValidationResult = await backend.schema.visualValidate({
+            schema: finalSchema,
+            screenshot: scrapeResult.screenshot,
             url: scrapeResult.url,
+            title: scrapeResult.title,
+            content: scrapeResult.content,
           });
-          
-          finalSchema = optimizationResult.optimizedSchema;
-          finalConfidence = Math.max(finalConfidence, optimizationResult.confidence);
-          setOptimizationChanges(optimizationResult.changes);
+          setVisualValidation(visualValidationResult);
+          updateStepStatus("visual", "completed");
+
+          // Step 7: Optimize schema based on visual validation
+          if (visualValidationResult.validations.length > 0 || visualValidationResult.improvements.length > 0) {
+            updateStepStatus("optimize", "running");
+            setCurrentStep(6);
+            try {
+              const optimizationResult = await backend.schema.optimize({
+                originalSchema: finalSchema,
+                visualValidation: visualValidationResult,
+                content: scrapeResult.content,
+                title: scrapeResult.title,
+                url: scrapeResult.url,
+              });
+              
+              finalSchema = optimizationResult.optimizedSchema;
+              finalConfidence = Math.max(finalConfidence, optimizationResult.confidence);
+              setOptimizationChanges(optimizationResult.changes);
+              updateStepStatus("optimize", "completed");
+            } catch (optimizeError) {
+              console.error("Schema optimization failed:", optimizeError);
+              updateStepStatus("optimize", "error");
+              // Continue with the original schema
+            }
+          } else {
+            updateStepStatus("optimize", "completed");
+          }
+        } catch (visualError) {
+          console.error("Visual validation failed:", visualError);
+          updateStepStatus("visual", "error");
           updateStepStatus("optimize", "completed");
-        } else {
-          updateStepStatus("optimize", "completed");
+          // Continue without visual validation
         }
       } else {
         updateStepStatus("visual", "completed");
@@ -244,11 +263,16 @@ export function SchemaGenerator() {
       setConfidence(finalConfidence);
 
       // Validate the final schema
-      const validationResult = await backend.schema.validate({
-        schema: finalSchema,
-      });
+      try {
+        const validationResult = await backend.schema.validate({
+          schema: finalSchema,
+        });
+        setValidation(validationResult);
+      } catch (validationError) {
+        console.error("Schema validation failed:", validationError);
+        // Continue without validation results
+      }
 
-      setValidation(validationResult);
       setCurrentStep(-1);
 
       toast({

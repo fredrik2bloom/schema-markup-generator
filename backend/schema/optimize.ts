@@ -67,17 +67,22 @@ Please optimize the schema markup by:
 5. Adding any missing but important schema properties
 6. Maintaining valid JSON-LD structure
 
-Return your response in this JSON format:
+CRITICAL: Return your response in this EXACT JSON format with no additional text or markdown:
 {
-  "optimizedSchema": { /* the improved JSON-LD schema */ },
+  "optimizedSchema": {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Example Title"
+  },
   "changes": [
     "Added missing image property",
-    "Fixed incorrect price format",
-    "Updated author information"
+    "Fixed incorrect price format"
   ],
   "confidence": 0.92,
   "reasoning": "Explanation of the key optimizations made"
 }
+
+Do not include any explanations, markdown formatting, or additional text. Return only the JSON object.
 `;
 
     try {
@@ -92,14 +97,14 @@ Return your response in this JSON format:
           messages: [
             {
               role: "system",
-              content: "You are an expert in schema.org markup optimization. Improve schema markup based on visual validation feedback to ensure maximum accuracy and SEO benefit."
+              content: "You are an expert in schema.org markup optimization. Always respond with valid JSON only, no markdown or additional text."
             },
             {
               role: "user",
               content: prompt
             }
           ],
-          temperature: 0.2,
+          temperature: 0.1,
           max_tokens: 2500,
         }),
       });
@@ -115,45 +120,88 @@ Return your response in this JSON format:
         throw APIError.internal("No content generated from OpenAI");
       }
 
+      // Clean the response - remove any markdown formatting
+      let cleanedContent = generatedContent.trim();
+      
+      // Remove markdown code blocks if present
+      cleanedContent = cleanedContent.replace(/```json\s*/g, '');
+      cleanedContent = cleanedContent.replace(/```\s*/g, '');
+      
+      // Remove any leading/trailing whitespace
+      cleanedContent = cleanedContent.trim();
+
       // Parse the JSON response
       let optimization: OptimizeSchemaResponse;
       try {
-        optimization = JSON.parse(generatedContent);
+        optimization = JSON.parse(cleanedContent);
       } catch (parseError) {
-        // Try to extract JSON from the response if it's wrapped in markdown or other text
-        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        console.error("Failed to parse optimization response:", cleanedContent);
+        
+        // Try to extract JSON from the response if it's wrapped in other text
+        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           try {
             optimization = JSON.parse(jsonMatch[0]);
-          } catch {
-            throw APIError.internal("Failed to parse schema optimization response");
+          } catch (secondParseError) {
+            console.error("Failed to parse extracted JSON:", jsonMatch[0]);
+            
+            // Create a fallback response using the original schema
+            optimization = {
+              optimizedSchema: req.originalSchema,
+              changes: ["Unable to optimize due to parsing issues"],
+              confidence: 0.5,
+              reasoning: "Optimization could not be completed due to parsing issues"
+            };
           }
         } else {
-          throw APIError.internal("Failed to parse schema optimization response");
+          // Create a fallback response using the original schema
+          optimization = {
+            optimizedSchema: req.originalSchema,
+            changes: ["Unable to optimize due to parsing issues"],
+            confidence: 0.5,
+            reasoning: "Optimization could not be completed due to parsing issues"
+          };
         }
       }
 
-      // Validate the response structure
-      if (!optimization.optimizedSchema || !Array.isArray(optimization.changes)) {
-        throw APIError.internal("Invalid schema optimization response structure");
+      // Validate the response structure and provide defaults
+      if (!optimization.optimizedSchema || typeof optimization.optimizedSchema !== 'object') {
+        optimization.optimizedSchema = req.originalSchema;
+      }
+      
+      if (!Array.isArray(optimization.changes)) {
+        optimization.changes = [];
+      }
+      
+      if (typeof optimization.confidence !== 'number') {
+        optimization.confidence = 0.7;
+      }
+      
+      if (typeof optimization.reasoning !== 'string') {
+        optimization.reasoning = "Schema optimization completed";
       }
 
       // Basic validation of the optimized schema
-      if (!optimization.optimizedSchema["@context"] || !optimization.optimizedSchema["@type"]) {
-        throw APIError.internal("Optimized schema is missing required @context or @type");
+      if (!optimization.optimizedSchema["@context"]) {
+        optimization.optimizedSchema["@context"] = "https://schema.org";
+      }
+      
+      if (!optimization.optimizedSchema["@type"]) {
+        optimization.optimizedSchema["@type"] = req.originalSchema["@type"] || "WebPage";
       }
 
       return {
         optimizedSchema: optimization.optimizedSchema,
         changes: optimization.changes,
-        confidence: optimization.confidence || 0.8,
-        reasoning: optimization.reasoning || "Schema optimized based on visual validation feedback"
+        confidence: Math.min(Math.max(optimization.confidence, 0), 1), // Clamp between 0 and 1
+        reasoning: optimization.reasoning
       };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
       }
-      throw APIError.internal(`Failed to optimize schema: ${error}`);
+      console.error("Schema optimization error:", error);
+      throw APIError.internal(`Failed to optimize schema: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 );

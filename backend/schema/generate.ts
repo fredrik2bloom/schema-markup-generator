@@ -64,7 +64,7 @@ Please adapt this structure to fit the specific content while maintaining the pr
     prompt += `
 
 Requirements:
-1. Return ONLY valid JSON-LD markup
+1. Generate valid JSON-LD markup that follows schema.org standards
 2. Use appropriate schema.org types${req.pageType ? ` (preferably ${req.pageType})` : ''}
 3. Include all relevant properties based on the content
 4. Ensure the JSON is properly formatted
@@ -72,12 +72,19 @@ Requirements:
 6. Use the provided URL, title, and description where appropriate
 ${req.recommendedStructure ? '7. Follow the recommended structure patterns where applicable' : ''}
 
-Return your response in this JSON format:
+CRITICAL: Return your response in this EXACT JSON format with no additional text or markdown:
 {
-  "schema": { /* the JSON-LD schema object */ },
+  "schema": {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Example Title",
+    "url": "https://example.com"
+  },
   "confidence": 0.85,
   "appliedPatterns": ["pattern1", "pattern2"]
 }
+
+Do not include any explanations, markdown formatting, or additional text. Return only the JSON object.
 `;
 
     try {
@@ -92,14 +99,14 @@ Return your response in this JSON format:
           messages: [
             {
               role: "system",
-              content: "You are an expert in schema.org markup and SEO. Generate accurate and comprehensive JSON-LD schema markup based on website content and proven patterns from similar pages."
+              content: "You are an expert in schema.org markup and SEO. Generate accurate and comprehensive JSON-LD schema markup. Always respond with valid JSON only, no markdown or additional text."
             },
             {
               role: "user",
               content: prompt
             }
           ],
-          temperature: 0.3,
+          temperature: 0.1,
           max_tokens: 2500,
         }),
       });
@@ -115,49 +122,111 @@ Return your response in this JSON format:
         throw APIError.internal("No content generated from OpenAI");
       }
 
+      // Clean the response - remove any markdown formatting
+      let cleanedContent = generatedContent.trim();
+      
+      // Remove markdown code blocks if present
+      cleanedContent = cleanedContent.replace(/```json\s*/g, '');
+      cleanedContent = cleanedContent.replace(/```\s*/g, '');
+      
+      // Remove any leading/trailing whitespace
+      cleanedContent = cleanedContent.trim();
+
       // Parse the JSON response
       let result: GenerateSchemaResponse;
       try {
-        result = JSON.parse(generatedContent);
+        result = JSON.parse(cleanedContent);
       } catch (parseError) {
-        // Try to extract JSON from the response if it's wrapped in markdown or other text
-        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        console.error("Failed to parse OpenAI response:", cleanedContent);
+        
+        // Try to extract JSON from the response if it's wrapped in other text
+        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           try {
             result = JSON.parse(jsonMatch[0]);
-          } catch {
-            // Fallback: treat the entire content as just the schema
-            try {
-              const schema = JSON.parse(generatedContent);
-              result = {
-                schema,
-                confidence: 0.7,
-                appliedPatterns: []
-              };
-            } catch {
-              throw APIError.internal("Failed to parse generated JSON-LD schema");
-            }
+          } catch (secondParseError) {
+            console.error("Failed to parse extracted JSON:", jsonMatch[0]);
+            
+            // Last resort: try to create a basic schema from the content
+            const fallbackSchema = {
+              "@context": "https://schema.org",
+              "@type": req.pageType || "WebPage",
+              "name": req.title,
+              "url": req.url,
+              "description": req.description
+            };
+            
+            result = {
+              schema: fallbackSchema,
+              confidence: 0.5,
+              appliedPatterns: ["fallback"]
+            };
           }
         } else {
-          throw APIError.internal("Failed to parse generated JSON-LD schema");
+          // Create a basic fallback schema
+          const fallbackSchema = {
+            "@context": "https://schema.org",
+            "@type": req.pageType || "WebPage",
+            "name": req.title,
+            "url": req.url,
+            "description": req.description
+          };
+          
+          result = {
+            schema: fallbackSchema,
+            confidence: 0.5,
+            appliedPatterns: ["fallback"]
+          };
         }
       }
 
-      // Basic validation
-      if (!result.schema || !result.schema["@context"] || !result.schema["@type"]) {
-        throw APIError.internal("Generated schema is missing required @context or @type");
+      // Validate the result structure
+      if (!result || typeof result !== 'object') {
+        throw APIError.internal("Invalid response structure from OpenAI");
+      }
+
+      // Ensure we have a schema object
+      if (!result.schema || typeof result.schema !== 'object') {
+        const fallbackSchema = {
+          "@context": "https://schema.org",
+          "@type": req.pageType || "WebPage",
+          "name": req.title,
+          "url": req.url,
+          "description": req.description
+        };
+        
+        result.schema = fallbackSchema;
+      }
+
+      // Basic validation of the schema
+      if (!result.schema["@context"]) {
+        result.schema["@context"] = "https://schema.org";
+      }
+      
+      if (!result.schema["@type"]) {
+        result.schema["@type"] = req.pageType || "WebPage";
+      }
+
+      // Ensure confidence and appliedPatterns are present
+      if (typeof result.confidence !== 'number') {
+        result.confidence = 0.7;
+      }
+      
+      if (!Array.isArray(result.appliedPatterns)) {
+        result.appliedPatterns = [];
       }
 
       return {
         schema: result.schema,
-        confidence: result.confidence || 0.7,
-        appliedPatterns: result.appliedPatterns || []
+        confidence: Math.min(Math.max(result.confidence, 0), 1), // Clamp between 0 and 1
+        appliedPatterns: result.appliedPatterns
       };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
       }
-      throw APIError.internal(`Failed to generate schema: ${error}`);
+      console.error("Schema generation error:", error);
+      throw APIError.internal(`Failed to generate schema: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 );

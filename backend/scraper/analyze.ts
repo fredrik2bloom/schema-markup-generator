@@ -38,7 +38,7 @@ Description: ${req.description || "Not provided"}
 Content:
 ${req.content.substring(0, 3000)} ${req.content.length > 3000 ? "..." : ""}
 
-Return your analysis in the following JSON format:
+CRITICAL: Return your response in this EXACT JSON format with no additional text or markdown:
 {
   "pageType": "primary schema.org type (e.g., Article, Product, Organization)",
   "category": "business category or industry",
@@ -46,7 +46,7 @@ Return your analysis in the following JSON format:
   "confidence": 0.85
 }
 
-Focus on identifying the most appropriate schema.org type and generating search queries that would find pages with similar content structure and purpose.
+Do not include any explanations, markdown formatting, or additional text. Return only the JSON object.
 `;
 
     try {
@@ -61,14 +61,14 @@ Focus on identifying the most appropriate schema.org type and generating search 
           messages: [
             {
               role: "system",
-              content: "You are an expert in web content analysis and schema.org markup. Analyze content to determine the most appropriate schema type and generate effective search queries."
+              content: "You are an expert in web content analysis and schema.org markup. Always respond with valid JSON only, no markdown or additional text."
             },
             {
               role: "user",
               content: prompt
             }
           ],
-          temperature: 0.3,
+          temperature: 0.1,
           max_tokens: 500,
         }),
       });
@@ -84,35 +84,79 @@ Focus on identifying the most appropriate schema.org type and generating search 
         throw APIError.internal("No content generated from OpenAI");
       }
 
+      // Clean the response - remove any markdown formatting
+      let cleanedContent = generatedContent.trim();
+      
+      // Remove markdown code blocks if present
+      cleanedContent = cleanedContent.replace(/```json\s*/g, '');
+      cleanedContent = cleanedContent.replace(/```\s*/g, '');
+      
+      // Remove any leading/trailing whitespace
+      cleanedContent = cleanedContent.trim();
+
       // Parse the JSON response
       let analysis: AnalyzePageResponse;
       try {
-        analysis = JSON.parse(generatedContent);
+        analysis = JSON.parse(cleanedContent);
       } catch (parseError) {
-        // Try to extract JSON from the response if it's wrapped in markdown or other text
-        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        console.error("Failed to parse page analysis response:", cleanedContent);
+        
+        // Try to extract JSON from the response if it's wrapped in other text
+        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           try {
             analysis = JSON.parse(jsonMatch[0]);
-          } catch {
-            throw APIError.internal("Failed to parse page analysis");
+          } catch (secondParseError) {
+            console.error("Failed to parse extracted JSON:", jsonMatch[0]);
+            
+            // Create a fallback response
+            analysis = {
+              pageType: "WebPage",
+              category: "General",
+              searchQueries: ["website schema markup", "webpage structured data"],
+              confidence: 0.5
+            };
           }
         } else {
-          throw APIError.internal("Failed to parse page analysis");
+          // Create a fallback response
+          analysis = {
+            pageType: "WebPage",
+            category: "General",
+            searchQueries: ["website schema markup", "webpage structured data"],
+            confidence: 0.5
+          };
         }
       }
 
-      // Validate the response structure
-      if (!analysis.pageType || !analysis.category || !Array.isArray(analysis.searchQueries)) {
-        throw APIError.internal("Invalid analysis response structure");
+      // Validate the response structure and provide defaults
+      if (typeof analysis.pageType !== 'string' || !analysis.pageType) {
+        analysis.pageType = "WebPage";
+      }
+      
+      if (typeof analysis.category !== 'string' || !analysis.category) {
+        analysis.category = "General";
+      }
+      
+      if (!Array.isArray(analysis.searchQueries) || analysis.searchQueries.length === 0) {
+        analysis.searchQueries = ["website schema markup", "webpage structured data"];
+      }
+      
+      if (typeof analysis.confidence !== 'number') {
+        analysis.confidence = 0.7;
       }
 
-      return analysis;
+      return {
+        pageType: analysis.pageType,
+        category: analysis.category,
+        searchQueries: analysis.searchQueries,
+        confidence: Math.min(Math.max(analysis.confidence, 0), 1) // Clamp between 0 and 1
+      };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
       }
-      throw APIError.internal(`Failed to analyze page: ${error}`);
+      console.error("Page analysis error:", error);
+      throw APIError.internal(`Failed to analyze page: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 );
