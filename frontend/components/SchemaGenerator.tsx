@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Globe, Code, CheckCircle, AlertTriangle, XCircle, Search, Brain, Target } from "lucide-react";
+import { Loader2, Globe, Code, CheckCircle, AlertTriangle, XCircle, Search, Brain, Target, Eye, Zap } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import backend from "~backend/client";
 import type { ValidateSchemaResponse } from "~backend/schema/validate";
@@ -18,21 +18,37 @@ interface GenerationStep {
   icon: React.ComponentType<{ className?: string }>;
 }
 
+interface VisualValidation {
+  field: string;
+  issue: string;
+  severity: "error" | "warning" | "suggestion";
+  recommendation: string;
+}
+
 export function SchemaGenerator() {
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [schema, setSchema] = useState<Record<string, any> | null>(null);
   const [validation, setValidation] = useState<ValidateSchemaResponse | null>(null);
+  const [visualValidation, setVisualValidation] = useState<{
+    isAccurate: boolean;
+    confidence: number;
+    validations: VisualValidation[];
+    improvements: string[];
+    overallAssessment: string;
+  } | null>(null);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [appliedPatterns, setAppliedPatterns] = useState<string[]>([]);
+  const [optimizationChanges, setOptimizationChanges] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState<number>(-1);
+  const [screenshot, setScreenshot] = useState<string | null>(null);
   const { toast } = useToast();
 
   const steps: GenerationStep[] = [
     {
       id: "scrape",
       title: "Scraping Website",
-      description: "Extracting content from the target URL",
+      description: "Extracting content and capturing screenshot",
       status: "pending",
       icon: Globe
     },
@@ -63,6 +79,20 @@ export function SchemaGenerator() {
       description: "Creating optimized JSON-LD markup",
       status: "pending",
       icon: Code
+    },
+    {
+      id: "visual",
+      title: "Visual Validation",
+      description: "Analyzing screenshot for schema accuracy",
+      status: "pending",
+      icon: Eye
+    },
+    {
+      id: "optimize",
+      title: "Optimizing Schema",
+      description: "Refining markup based on visual analysis",
+      status: "pending",
+      icon: Zap
     }
   ];
 
@@ -87,8 +117,11 @@ export function SchemaGenerator() {
     setIsLoading(true);
     setSchema(null);
     setValidation(null);
+    setVisualValidation(null);
     setConfidence(null);
     setAppliedPatterns([]);
+    setOptimizationChanges([]);
+    setScreenshot(null);
     setCurrentStep(0);
     setGenerationSteps(steps.map(step => ({ ...step, status: "pending" })));
 
@@ -97,6 +130,7 @@ export function SchemaGenerator() {
       updateStepStatus("scrape", "running");
       setCurrentStep(0);
       const scrapeResult = await backend.scraper.scrape({ url: url.trim() });
+      setScreenshot(scrapeResult.screenshot || null);
       updateStepStatus("scrape", "completed");
 
       // Step 2: Analyze the content
@@ -163,14 +197,55 @@ export function SchemaGenerator() {
         insights,
       });
 
-      setSchema(schemaResult.schema);
-      setConfidence(schemaResult.confidence);
+      let finalSchema = schemaResult.schema;
+      let finalConfidence = schemaResult.confidence;
       setAppliedPatterns(schemaResult.appliedPatterns);
       updateStepStatus("generate", "completed");
 
-      // Validate the generated schema
+      // Step 6: Visual validation (if screenshot is available)
+      if (scrapeResult.screenshot) {
+        updateStepStatus("visual", "running");
+        setCurrentStep(5);
+        const visualValidationResult = await backend.schema.visualValidate({
+          schema: finalSchema,
+          screenshot: scrapeResult.screenshot,
+          url: scrapeResult.url,
+          title: scrapeResult.title,
+          content: scrapeResult.content,
+        });
+        setVisualValidation(visualValidationResult);
+        updateStepStatus("visual", "completed");
+
+        // Step 7: Optimize schema based on visual validation
+        if (visualValidationResult.validations.length > 0 || visualValidationResult.improvements.length > 0) {
+          updateStepStatus("optimize", "running");
+          setCurrentStep(6);
+          const optimizationResult = await backend.schema.optimize({
+            originalSchema: finalSchema,
+            visualValidation: visualValidationResult,
+            content: scrapeResult.content,
+            title: scrapeResult.title,
+            url: scrapeResult.url,
+          });
+          
+          finalSchema = optimizationResult.optimizedSchema;
+          finalConfidence = Math.max(finalConfidence, optimizationResult.confidence);
+          setOptimizationChanges(optimizationResult.changes);
+          updateStepStatus("optimize", "completed");
+        } else {
+          updateStepStatus("optimize", "completed");
+        }
+      } else {
+        updateStepStatus("visual", "completed");
+        updateStepStatus("optimize", "completed");
+      }
+
+      setSchema(finalSchema);
+      setConfidence(finalConfidence);
+
+      // Validate the final schema
       const validationResult = await backend.schema.validate({
-        schema: schemaResult.schema,
+        schema: finalSchema,
       });
 
       setValidation(validationResult);
@@ -178,7 +253,7 @@ export function SchemaGenerator() {
 
       toast({
         title: "Success",
-        description: `Schema markup generated successfully! (${Math.round(schemaResult.confidence * 100)}% confidence)`,
+        description: `Schema markup generated successfully! (${Math.round(finalConfidence * 100)}% confidence)`,
       });
     } catch (error) {
       console.error("Error generating schema:", error);
@@ -229,6 +304,24 @@ export function SchemaGenerator() {
       return <XCircle className="h-4 w-4 text-red-600" />;
     }
     return <IconComponent className="h-4 w-4 text-gray-400" />;
+  };
+
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case "error": return "text-red-600";
+      case "warning": return "text-yellow-600";
+      case "suggestion": return "text-blue-600";
+      default: return "text-gray-600";
+    }
+  };
+
+  const getSeverityBadge = (severity: string) => {
+    switch (severity) {
+      case "error": return "destructive";
+      case "warning": return "secondary";
+      case "suggestion": return "outline";
+      default: return "outline";
+    }
   };
 
   return (
@@ -323,6 +416,127 @@ export function SchemaGenerator() {
         </Card>
       )}
 
+      {/* Screenshot Preview */}
+      {screenshot && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              Website Screenshot
+            </CardTitle>
+            <CardDescription>
+              Visual representation used for schema validation
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="max-w-2xl mx-auto">
+              <img 
+                src={`data:image/png;base64,${screenshot}`} 
+                alt="Website screenshot" 
+                className="w-full border rounded-lg shadow-sm"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Visual Validation Results */}
+      {visualValidation && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              Visual Validation Results
+            </CardTitle>
+            <CardDescription>
+              Analysis based on website screenshot and visual elements
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div>
+                <div className="text-sm font-medium">Visual Accuracy</div>
+                <div className={`text-2xl font-bold ${visualValidation.isAccurate ? 'text-green-600' : 'text-yellow-600'}`}>
+                  {visualValidation.isAccurate ? 'Accurate' : 'Needs Review'}
+                </div>
+              </div>
+              <div>
+                <div className="text-sm font-medium">Confidence</div>
+                <div className="text-2xl font-bold text-blue-600">
+                  {Math.round(visualValidation.confidence * 100)}%
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h4 className="font-medium mb-2">Overall Assessment</h4>
+              <p className="text-sm text-gray-700">{visualValidation.overallAssessment}</p>
+            </div>
+
+            {visualValidation.validations.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="font-medium">Specific Validations</h4>
+                {visualValidation.validations.map((validation, index) => (
+                  <div key={index} className="border rounded-lg p-3">
+                    <div className="flex items-start gap-2 mb-2">
+                      <Badge variant={getSeverityBadge(validation.severity)} className="text-xs">
+                        {validation.severity}
+                      </Badge>
+                      <div className="flex-1">
+                        <div className="font-medium text-sm">{validation.field}</div>
+                        <div className="text-sm text-gray-600">{validation.issue}</div>
+                      </div>
+                    </div>
+                    <div className="text-sm bg-blue-50 p-2 rounded">
+                      <strong>Recommendation:</strong> {validation.recommendation}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {visualValidation.improvements.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="font-medium">Suggested Improvements</h4>
+                <ul className="space-y-1">
+                  {visualValidation.improvements.map((improvement, index) => (
+                    <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                      <span className="text-blue-500 mt-1">•</span>
+                      {improvement}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Optimization Changes */}
+      {optimizationChanges.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5" />
+              Schema Optimizations
+            </CardTitle>
+            <CardDescription>
+              Changes made based on visual validation feedback
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {optimizationChanges.map((change, index) => (
+                <li key={index} className="text-sm flex items-start gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                  {change}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Generation Results Summary */}
       {confidence !== null && appliedPatterns.length > 0 && (
         <Card>
@@ -367,7 +581,7 @@ export function SchemaGenerator() {
               ) : (
                 <XCircle className="h-5 w-5 text-red-600" />
               )}
-              Validation Results
+              Schema Validation Results
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">

@@ -12,9 +12,10 @@ interface ScrapeResponse {
   title: string;
   description?: string;
   url: string;
+  screenshot?: string;
 }
 
-// Scrapes a website using Firecrawl and returns the content.
+// Scrapes a website using Firecrawl and returns the content with screenshot.
 export const scrape = api<ScrapeRequest, ScrapeResponse>(
   { expose: true, method: "POST", path: "/scrape" },
   async (req) => {
@@ -41,6 +42,7 @@ export const scrape = api<ScrapeRequest, ScrapeResponse>(
           pageOptions: {
             onlyMainContent: true,
             includeHtml: false,
+            screenshot: true,
           },
         }),
       });
@@ -63,6 +65,7 @@ export const scrape = api<ScrapeRequest, ScrapeResponse>(
         title: scrapedData.metadata?.title || "",
         description: scrapedData.metadata?.description,
         url: req.url,
+        screenshot: scrapedData.screenshot,
       };
     } catch (error) {
       if (error instanceof APIError) {
