@@ -8,13 +8,25 @@ interface GenerateSchemaRequest {
   title: string;
   description?: string;
   url: string;
+  pageType?: string;
+  category?: string;
+  recommendedStructure?: Record<string, any>;
+  patterns?: Array<{
+    field: string;
+    frequency: number;
+    examples: any[];
+    required: boolean;
+  }>;
+  insights?: string[];
 }
 
 interface GenerateSchemaResponse {
   schema: Record<string, any>;
+  confidence: number;
+  appliedPatterns: string[];
 }
 
-// Generates JSON-LD schema markup from scraped content using AI.
+// Generates JSON-LD schema markup from scraped content using AI and pattern analysis.
 export const generate = api<GenerateSchemaRequest, GenerateSchemaResponse>(
   { expose: true, method: "POST", path: "/schema/generate" },
   async (req) => {
@@ -22,9 +34,8 @@ export const generate = api<GenerateSchemaRequest, GenerateSchemaResponse>(
       throw APIError.invalidArgument("Content, title, and URL are required");
     }
 
-    const prompt = `
-Analyze the following website content and generate appropriate JSON-LD schema markup. 
-Choose the most suitable schema.org type based on the content (e.g., Article, WebPage, Organization, Product, etc.).
+    let prompt = `
+Analyze the following website content and generate appropriate JSON-LD schema markup.
 
 Website URL: ${req.url}
 Title: ${req.title}
@@ -32,16 +43,41 @@ Description: ${req.description || "Not provided"}
 
 Content:
 ${req.content.substring(0, 4000)} ${req.content.length > 4000 ? "..." : ""}
+`;
+
+    // Add pattern-based guidance if available
+    if (req.pageType && req.recommendedStructure) {
+      prompt += `
+
+IMPORTANT: Based on analysis of similar ${req.pageType} pages, use this recommended structure as a foundation:
+${JSON.stringify(req.recommendedStructure, null, 2)}
+
+Common patterns observed in similar pages:
+${req.patterns?.map(p => `- ${p.field}: appears in ${Math.round(p.frequency * 100)}% of examples${p.required ? ' (required)' : ''}`).join('\n') || 'None provided'}
+
+Best practices insights:
+${req.insights?.map(insight => `- ${insight}`).join('\n') || 'None provided'}
+
+Please adapt this structure to fit the specific content while maintaining the proven patterns.`;
+    }
+
+    prompt += `
 
 Requirements:
 1. Return ONLY valid JSON-LD markup
-2. Use appropriate schema.org types
+2. Use appropriate schema.org types${req.pageType ? ` (preferably ${req.pageType})` : ''}
 3. Include all relevant properties based on the content
 4. Ensure the JSON is properly formatted
 5. Include @context and @type
 6. Use the provided URL, title, and description where appropriate
+${req.recommendedStructure ? '7. Follow the recommended structure patterns where applicable' : ''}
 
-Return only the JSON-LD object, no explanations or additional text.
+Return your response in this JSON format:
+{
+  "schema": { /* the JSON-LD schema object */ },
+  "confidence": 0.85,
+  "appliedPatterns": ["pattern1", "pattern2"]
+}
 `;
 
     try {
@@ -56,7 +92,7 @@ Return only the JSON-LD object, no explanations or additional text.
           messages: [
             {
               role: "system",
-              content: "You are an expert in schema.org markup and SEO. Generate accurate and comprehensive JSON-LD schema markup based on website content."
+              content: "You are an expert in schema.org markup and SEO. Generate accurate and comprehensive JSON-LD schema markup based on website content and proven patterns from similar pages."
             },
             {
               role: "user",
@@ -64,7 +100,7 @@ Return only the JSON-LD object, no explanations or additional text.
             }
           ],
           temperature: 0.3,
-          max_tokens: 2000,
+          max_tokens: 2500,
         }),
       });
 
@@ -79,18 +115,28 @@ Return only the JSON-LD object, no explanations or additional text.
         throw APIError.internal("No content generated from OpenAI");
       }
 
-      // Parse the JSON-LD
-      let schema: Record<string, any>;
+      // Parse the JSON response
+      let result: GenerateSchemaResponse;
       try {
-        schema = JSON.parse(generatedContent);
+        result = JSON.parse(generatedContent);
       } catch (parseError) {
         // Try to extract JSON from the response if it's wrapped in markdown or other text
         const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           try {
-            schema = JSON.parse(jsonMatch[0]);
+            result = JSON.parse(jsonMatch[0]);
           } catch {
-            throw APIError.internal("Failed to parse generated JSON-LD schema");
+            // Fallback: treat the entire content as just the schema
+            try {
+              const schema = JSON.parse(generatedContent);
+              result = {
+                schema,
+                confidence: 0.7,
+                appliedPatterns: []
+              };
+            } catch {
+              throw APIError.internal("Failed to parse generated JSON-LD schema");
+            }
           }
         } else {
           throw APIError.internal("Failed to parse generated JSON-LD schema");
@@ -98,11 +144,15 @@ Return only the JSON-LD object, no explanations or additional text.
       }
 
       // Basic validation
-      if (!schema["@context"] || !schema["@type"]) {
+      if (!result.schema || !result.schema["@context"] || !result.schema["@type"]) {
         throw APIError.internal("Generated schema is missing required @context or @type");
       }
 
-      return { schema };
+      return {
+        schema: result.schema,
+        confidence: result.confidence || 0.7,
+        appliedPatterns: result.appliedPatterns || []
+      };
     } catch (error) {
       if (error instanceof APIError) {
         throw error;
