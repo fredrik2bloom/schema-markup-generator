@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, Globe, Code, CheckCircle, AlertTriangle, XCircle, Search, Brain, Target, Eye, Zap } from "lucide-react";
+import { Loader2, Globe, Code, CheckCircle, AlertTriangle, XCircle, Search, Brain, Target, Eye, Zap, FileText, Database, Lightbulb } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import backend from "~backend/client";
 import type { ValidateSchemaResponse } from "~backend/schema/validate";
@@ -25,6 +25,21 @@ interface VisualValidation {
   recommendation: string;
 }
 
+interface SearchResult {
+  url: string;
+  title: string;
+  description?: string;
+  content: string;
+  schemaMarkup?: Record<string, any>[];
+}
+
+interface SchemaPattern {
+  field: string;
+  frequency: number;
+  examples: any[];
+  required: boolean;
+}
+
 export function SchemaGenerator() {
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -42,6 +57,27 @@ export function SchemaGenerator() {
   const [optimizationChanges, setOptimizationChanges] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState<number>(-1);
   const [screenshot, setScreenshot] = useState<string | null>(null);
+  
+  // Process insights data
+  const [scrapedData, setScrapedData] = useState<{
+    content: string;
+    title: string;
+    description?: string;
+    url: string;
+  } | null>(null);
+  const [analysisData, setAnalysisData] = useState<{
+    pageType: string;
+    category: string;
+    searchQueries: string[];
+    confidence: number;
+  } | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [patternData, setPatternData] = useState<{
+    recommendedStructure: Record<string, any>;
+    patterns: SchemaPattern[];
+    insights: string[];
+  } | null>(null);
+  
   const { toast } = useToast();
 
   const steps: GenerationStep[] = [
@@ -122,6 +158,10 @@ export function SchemaGenerator() {
     setAppliedPatterns([]);
     setOptimizationChanges([]);
     setScreenshot(null);
+    setScrapedData(null);
+    setAnalysisData(null);
+    setSearchResults([]);
+    setPatternData(null);
     setCurrentStep(0);
     setGenerationSteps(steps.map(step => ({ ...step, status: "pending" })));
 
@@ -131,6 +171,12 @@ export function SchemaGenerator() {
       setCurrentStep(0);
       const scrapeResult = await backend.scraper.scrape({ url: url.trim() });
       setScreenshot(scrapeResult.screenshot || null);
+      setScrapedData({
+        content: scrapeResult.content,
+        title: scrapeResult.title,
+        description: scrapeResult.description,
+        url: scrapeResult.url
+      });
       updateStepStatus("scrape", "completed");
 
       // Step 2: Analyze the content
@@ -142,6 +188,7 @@ export function SchemaGenerator() {
         description: scrapeResult.description,
         url: scrapeResult.url,
       });
+      setAnalysisData(analysisResult);
       updateStepStatus("analyze", "completed");
 
       // Step 3: Search for similar pages
@@ -152,6 +199,7 @@ export function SchemaGenerator() {
         pageType: analysisResult.pageType,
         maxResults: 8,
       });
+      setSearchResults(searchResult.results);
       updateStepStatus("search", "completed");
 
       let recommendedStructure;
@@ -178,6 +226,7 @@ export function SchemaGenerator() {
           recommendedStructure = patternAnalysis.recommendedStructure;
           patterns = patternAnalysis.patterns;
           insights = patternAnalysis.insights;
+          setPatternData(patternAnalysis);
           updateStepStatus("patterns", "completed");
         } catch (patternError) {
           console.error("Pattern analysis failed:", patternError);
@@ -436,6 +485,229 @@ export function SchemaGenerator() {
                 ))}
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Scraped Content Data */}
+      {scrapedData && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Scraped Content Analysis
+            </CardTitle>
+            <CardDescription>
+              Content extracted from the target website
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-medium text-sm mb-2">Page Title</h4>
+                <p className="text-sm bg-gray-50 p-2 rounded">{scrapedData.title}</p>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm mb-2">URL</h4>
+                <p className="text-sm bg-gray-50 p-2 rounded break-all">{scrapedData.url}</p>
+              </div>
+            </div>
+            
+            {scrapedData.description && (
+              <div>
+                <h4 className="font-medium text-sm mb-2">Meta Description</h4>
+                <p className="text-sm bg-gray-50 p-2 rounded">{scrapedData.description}</p>
+              </div>
+            )}
+            
+            <div>
+              <h4 className="font-medium text-sm mb-2">Content Preview</h4>
+              <div className="text-sm bg-gray-50 p-3 rounded max-h-32 overflow-y-auto">
+                {scrapedData.content.substring(0, 500)}
+                {scrapedData.content.length > 500 && "..."}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Total content length: {scrapedData.content.length} characters
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Content Analysis Results */}
+      {analysisData && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5" />
+              Content Analysis Results
+            </CardTitle>
+            <CardDescription>
+              AI-powered analysis of page type and category
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <h4 className="font-medium text-sm mb-2">Detected Page Type</h4>
+                <Badge variant="default" className="text-sm">
+                  {analysisData.pageType}
+                </Badge>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm mb-2">Business Category</h4>
+                <Badge variant="outline" className="text-sm">
+                  {analysisData.category}
+                </Badge>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm mb-2">Analysis Confidence</h4>
+                <div className="text-lg font-bold text-blue-600">
+                  {Math.round(analysisData.confidence * 100)}%
+                </div>
+              </div>
+            </div>
+            
+            <div>
+              <h4 className="font-medium text-sm mb-2">Generated Search Queries</h4>
+              <div className="flex flex-wrap gap-2">
+                {analysisData.searchQueries.map((query, index) => (
+                  <Badge key={index} variant="secondary" className="text-xs">
+                    {query}
+                  </Badge>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                These queries will be used to find similar pages with existing schema markup
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Search Results */}
+      {searchResults.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Search className="h-5 w-5" />
+              Similar Pages Found
+            </CardTitle>
+            <CardDescription>
+              Pages with existing schema markup used for pattern analysis
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600 mb-4">
+                Found {searchResults.length} similar pages, {searchResults.filter(r => r.schemaMarkup).length} with schema markup
+              </div>
+              
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {searchResults.map((result, index) => (
+                  <div key={index} className="border rounded-lg p-3">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex-1">
+                        <h5 className="font-medium text-sm">{result.title || "Untitled"}</h5>
+                        <p className="text-xs text-gray-500 break-all">{result.url}</p>
+                      </div>
+                      <div className="flex gap-1">
+                        {result.schemaMarkup && result.schemaMarkup.length > 0 && (
+                          <Badge variant="default" className="text-xs">
+                            {result.schemaMarkup.length} schema{result.schemaMarkup.length > 1 ? 's' : ''}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {result.description && (
+                      <p className="text-xs text-gray-600 mb-2">{result.description}</p>
+                    )}
+                    
+                    {result.schemaMarkup && result.schemaMarkup.length > 0 && (
+                      <div className="mt-2">
+                        <h6 className="text-xs font-medium mb-1">Schema Types Found:</h6>
+                        <div className="flex flex-wrap gap-1">
+                          {result.schemaMarkup.map((schema, schemaIndex) => (
+                            <Badge key={schemaIndex} variant="outline" className="text-xs">
+                              {schema['@type'] || 'Unknown'}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Pattern Analysis Results */}
+      {patternData && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Database className="h-5 w-5" />
+              Pattern Analysis Results
+            </CardTitle>
+            <CardDescription>
+              Common patterns identified from similar schema markup
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <h4 className="font-medium text-sm mb-2">Recommended Schema Structure</h4>
+              <div className="bg-gray-50 p-3 rounded text-xs">
+                <pre className="whitespace-pre-wrap">
+                  {JSON.stringify(patternData.recommendedStructure, null, 2)}
+                </pre>
+              </div>
+            </div>
+            
+            {patternData.patterns.length > 0 && (
+              <div>
+                <h4 className="font-medium text-sm mb-2">Field Frequency Analysis</h4>
+                <div className="space-y-2">
+                  {patternData.patterns.map((pattern, index) => (
+                    <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{pattern.field}</span>
+                        {pattern.required && (
+                          <Badge variant="destructive" className="text-xs">Required</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm text-gray-600">
+                          {Math.round(pattern.frequency * 100)}% frequency
+                        </div>
+                        <div className="w-16 bg-gray-200 rounded-full h-2">
+                          <div 
+                            className="bg-blue-600 h-2 rounded-full" 
+                            style={{ width: `${pattern.frequency * 100}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {patternData.insights.length > 0 && (
+              <div>
+                <h4 className="font-medium text-sm mb-2">Key Insights</h4>
+                <ul className="space-y-1">
+                  {patternData.insights.map((insight, index) => (
+                    <li key={index} className="text-sm text-gray-700 flex items-start gap-2">
+                      <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                      {insight}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
